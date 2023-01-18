@@ -3,6 +3,7 @@ import openfermion
 import numpy as np
 import sympy
 from hamiltonians import Hubbard_Model, D_wave_mean_field
+from Gates import *
 
 # ToDO: Modify the HVA class such that the snake mapping jw string is compatible with the original HVA ansatz
 # 1. ensure whether the FSWAP gate is in the cirq package
@@ -24,10 +25,10 @@ class Hamiltonian_Variational_Ansatz:
         self.hubbard_model = hubbard_model
         self.repetition = repetition
         self.snake_mapping = hubbard_model.snake_mapping
-        self.qubits = self._get_qubits()
+        self.qubits = self.get_qubits()
         self.hamiltonian = hubbard_model.qubit_hamiltonian()
 
-    def ansatz_circuit(self):
+    def circuit(self):
 
         # circuit parameters
         circuit = cirq.Circuit()
@@ -48,7 +49,7 @@ class Hamiltonian_Variational_Ansatz:
                 self._on_site_layer(circuit, jw_on_site, params_U[i] / 2)
         return circuit
 
-    def _get_qubits(self):
+    def get_qubits(self):
 
         qubits = [0] * self.n_qubit
         for i in range(self.y_dim):
@@ -77,7 +78,7 @@ class Hamiltonian_Variational_Ansatz:
             # implemetation of the even line
             for i in reversed(range(self.x_dim)):
                 for j in range(i, self.x_dim):
-                    self._FSWAP(circuit, self.qubits, j, j+1)
+                    circuit.append(FSWAP(self.qubits[j], self.qubits[j+1]))
 
                 for of_operator, coeff in jw_vertical_first.terms.items():
                     self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
@@ -85,7 +86,7 @@ class Hamiltonian_Variational_Ansatz:
             # implementation of the second line
             for i in range(self.x_dim):
                 for j in reversed(range(0, i)):
-                    self._FSWAP(circuit, self.qubits, j, j+1)
+                    circuit.append(FSWAP(self.qubits[j], self.qubits[j+1]))
 
                 for of_operator, coeff in jw_vertical_second.terms.items():
                     self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
@@ -98,11 +99,6 @@ class Hamiltonian_Variational_Ansatz:
         for of_operator, coeff in jw_horizontal.terms.items():
             self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
 
-    @staticmethod
-    def _FSWAP(circuit, qubits, i, j):
-        circuit.append(cirq.ISWAP(qubits[i], qubits[j]))
-        circuit.append(cirq.rz(-np.pi/2).on(qubits[i]))
-        circuit.append(cirq.rz(-np.pi/2).on(qubits[j]))
 
     @staticmethod
     def _pauli_string_rotation(circuit, qubits, of_operator, coefficient, theta):
@@ -157,7 +153,7 @@ class Symmetry_Breaking_Hamiltonian_Variational_Ansatz(Hamiltonian_Variational_A
             repetition
         )
 
-    def ansatz_circuit(self):
+    def circuit(self):
 
         # circuit parameters
         circuit = cirq.Circuit()
@@ -203,7 +199,7 @@ class Hardware_Efficient_Ansatz(Hamiltonian_Variational_Ansatz):
             repetition
         )
 
-    def ansatz_circuit(self):
+    def circuit(self):
 
         circuit = cirq.Circuit()
         params_rx = sympy.symbols('theta_X:{}'.format(self.repetition*self.n_qubit))
@@ -234,7 +230,7 @@ class Symmetric_Hardware_Efficient_Ansatz(Hamiltonian_Variational_Ansatz):
             repetition
         )
 
-    def ansatz_circuit(self):
+    def circuit(self):
 
         circuit = cirq.Circuit()
         params_rx = sympy.symbols('theta_X:{}'.format(self.repetition*self.n_qubit))
@@ -253,12 +249,78 @@ class Symmetric_Hardware_Efficient_Ansatz(Hamiltonian_Variational_Ansatz):
             for i in iterator:
                 circuit.append(cirq.rx(theta_rx[i]).on(self.qubits[i]))
                 circuit.append(cirq.ry(theta_ry[i]).on(self.qubits[i]))
-                circuit.append(cirq.rz(theta_rz[i]).on(self.qubits[i]))
+                circuit.append(cirq.rx(theta_rz[i]).on(self.qubits[i]))
 
             flag = flag * (-1)
 
         return circuit
 
+
+class Controlled_Layer_Ansatz(Hamiltonian_Variational_Ansatz):
+
+    def __init__(
+        self,
+        hubbard_model: Hubbard_Model,    # Hubbard_Model object from hamiltonians.py
+        repetition: int
+    ):
+        super().__init__(
+            hubbard_model,
+            repetition
+        )
+
+    def circuit(self):
+
+        circuit = cirq.Circuit()
+        params_theta_1 = sympy.symbols('theta1_rx:{}'.format(self.repetition*self.n_qubit))
+        params_theta_2 = sympy.symbols('theta2_ry:{}'.format(self.repetition*self.n_qubit))
+        params_theta_3 = sympy.symbols('theta3_rx:{}'.format(self.repetition*self.n_qubit))
+
+        for rep in range(self.repetition):
+            theta_1 = params_theta_1[rep*self.n_qubit:(rep+1)*self.n_qubit]
+            theta_2 = params_theta_2[rep*self.n_qubit:(rep+1)*self.n_qubit]
+            theta_3 = params_theta_3[rep*self.n_qubit:(rep+1)*self.n_qubit]
+            for i in range(self.n_qubit):
+                circuit.append(cirq.CZ(self.qubits[i], self.qubits[(i+1) % self.n_qubit]))
+            for i in range(self.n_qubit):
+                circuit.append(cirq.rx(theta_1[i]).on(self.qubits[i]))
+                circuit.append(cirq.ry(theta_2[i]).on(self.qubits[i]))
+                circuit.append(cirq.rx(theta_3[i]).on(self.qubits[i]))
+
+        return circuit
+
+class Symmetric_Controlled_Layer_Ansatz(Hamiltonian_Variational_Ansatz):
+
+    def __init__(
+        self,
+        hubbard_model: Hubbard_Model,    # Hubbard_Model object from hamiltonians.py
+        repetition: int
+    ):
+        super().__init__(
+            hubbard_model,
+            repetition
+        )
+
+    def circuit(self):
+
+        circuit = cirq.Circuit()
+        params_theta_1 = sympy.symbols('theta1_rx:{}'.format(self.repetition*self.n_qubit))
+        params_theta_2 = sympy.symbols('theta2_ry:{}'.format(self.repetition*self.n_qubit))
+        params_theta_3 = sympy.symbols('theta3_rx:{}'.format(self.repetition*self.n_qubit))
+        flag = 1
+
+        for rep in range(self.repetition):
+            theta_1 = params_theta_1[rep*self.n_qubit:(rep+1)*self.n_qubit]
+            theta_2 = params_theta_2[rep*self.n_qubit:(rep+1)*self.n_qubit]
+            theta_3 = params_theta_3[rep*self.n_qubit:(rep+1)*self.n_qubit]
+            iterator = range(self.n_qubit) if flag == 1 else reversed(range(self.n_qubit))
+            for i in iterator:
+                circuit.append(cirq.CZ(self.qubits[i], self.qubits[(i+1) % self.n_qubit]))
+            for i in iterator:
+                circuit.append(cirq.rx(theta_1[i]).on(self.qubits[i]))
+                circuit.append(cirq.ry(theta_2[i]).on(self.qubits[i]))
+                circuit.append(cirq.rx(theta_3[i]).on(self.qubits[i]))
+
+        return circuit
 
 class State_Preparation:
     
@@ -290,7 +352,7 @@ class State_Preparation:
 
         return qubits
 
-    def state_preparation_circuit(self):
+    def circuit(self):
         ops_layers = self.mean_field_hamiltonian.get_diagonalization_ops()
         circuit = cirq.Circuit()
 
@@ -301,66 +363,8 @@ class State_Preparation:
                     circuit.append(cirq.X(self.qubits[-1]))
 
                 else:
-                    (i1, i2, theta, phi) = op
-                    q1, q2 = self.qubits[i1], self.qubits[i2]
-                    circuit.append(cirq.CNOT(q2, q1))
-                    ### Controlled Ry gate is implemented by Rz(-pi/2) * CRx(·) * Rz(pi/2)
-                    ### CRx(·) is implemented by CNOT ** (·/pi)
-                    circuit.append(cirq.rz(-np.pi/2).on(q2))
-                    circuit.append(cirq.CNOT(q1, q2) ** (2 * theta / np.pi))
-                    circuit.append(cirq.rz(np.pi/2).on(q2))
-                    circuit.append(cirq.CNOT(q2, q1))
-                    circuit.append(cirq.rz(phi).on(q2))
+                    (i0, i1, theta, phi) = op
+                    q0, q1 = self.qubits[i0], self.qubits[i1]
+                    circuit.append(Givens_rot(q0, q1, theta, phi))
 
         return circuit
-
-def test_State_Preparation():
-    mean_field_hamiltonian = D_wave_mean_field(2, 2, 1, 4)
-    state_prep = State_Preparation(mean_field_hamiltonian)
-    print(state_prep._get_qubit())
-    print(state_prep.state_preparation_circuit())
-
-def test_Hamiltonian_Variational_Ansatz():
-    import os
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-    import tensorflow_quantum as tfq
-    hubbard_model = Hubbard_Model(2, 2, 1, 4)
-    mean_field_hamiltonian = D_wave_mean_field(2, 2, 1, 4)
-    ansatz = Hamiltonian_Variational_Ansatz(hubbard_model, repetition=3)
-    ansatz_circuit = ansatz.ansatz_circuit()
-    hamiltonian = ansatz._get_cirq_hamiltonian()
-
-    tfq.convert_to_tensor([ansatz_circuit])
-    print('success!')
-
-def test_tfq():
-    import os
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-    import tensorflow_quantum as tfq
-    
-    q = cirq.GridQubit.rect(1, 5)
-    a = sympy.Symbol('a')
-    b = sympy.Symbol('b')
-    circuit = cirq.Circuit()
-
-    operator = openfermion.QubitOperator('X0 X4')
-    hm = Hubbard_Model(2, 2, 4, 1)
-    hva = Hamiltonian_Variational_Ansatz(hm, repetition=2)
-    for of_operator, coeff in operator.terms.items():
-        print(of_operator)
-        print(coeff)
-        hva._pauli_string_rotation(circuit, q, of_operator, coeff, a)
-    
-    print(circuit)
-
-    circuit2 = cirq.Circuit([
-        cirq.CNOT(q[0], q[1]),
-        cirq.ry(a+b).on(q[1]),
-        cirq.CNOT(q[0], q[1])
-    ])
-
-    print(circuit2)
-
-    tfq.convert_to_tensor([circuit2])
-
-    print('success!')

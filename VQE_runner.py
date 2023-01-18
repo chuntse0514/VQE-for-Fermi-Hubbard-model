@@ -22,14 +22,14 @@ def main():
     # ansatz = Symmetry_Breaking_Hamiltonian_Variational_Ansatz(hubbard_model, repetition=30)
     # ansatz = Hardware_Efficient_Ansatz(hubbard_model, repetition=360)
     ansatz = Symmetric_Hardware_Efficient_Ansatz(hubbard_model, repetition=60)
-    ansatz_circuit = ansatz.ansatz_circuit()
+    ansatz_circuit = ansatz.circuit()
 
     depth = len(cirq.Circuit(ansatz_circuit.all_operations()))
     print('total circuit depth = {}'.format(depth))
 
     hamiltonian = ansatz._get_cirq_hamiltonian()
     state_preparation_circuit = tfq.convert_to_tensor(
-        [State_Preparation(mean_field_hamiltonian).state_preparation_circuit()]
+        [State_Preparation(mean_field_hamiltonian).circuit()]
         # [cirq.Circuit()]
     )
 

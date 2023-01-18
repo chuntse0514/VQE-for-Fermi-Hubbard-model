@@ -339,6 +339,15 @@ class D_wave_mean_field(Lattice_Hamiltonian):
         
         return hamiltonian
 
+    def qubit_hamiltonian(self):
+        hamiltonian = self.fermionic_hamiltonian()
+        return jordan_wigner(hamiltonian)
+
+    def exact_diagonalization(self):
+        matrix_form = get_sparse_operator(self.qubit_hamiltonian()).todense()
+        eigenvalues, eigenvectors = eigh(matrix_form)
+        return eigenvalues, eigenvectors
+
     def get_matrix_representation(self):
         n_site = 2 * self.x_dim * self.y_dim
         M = np.zeros((n_site, n_site))
@@ -348,16 +357,49 @@ class D_wave_mean_field(Lattice_Hamiltonian):
             # right and bottom index
             i_r = self._right_index(i)   
             i_b = self._bottom_index(i)
-            
-            M[self._up_spin_index(i), self._up_spin_index(i_r)] = -self.tunneling
-            M[self._down_spin_index(i), self._down_spin_index(i_r)] = -self.tunneling
-            M[self._up_spin_index(i), self._up_spin_index(i_b)] = -self.tunneling
-            M[self._down_spin_index(i), self._down_spin_index(i_b)] = -self.tunneling
 
-            Delta[self._up_spin_index(i), self._down_spin_index(i_r)] = -self.delta
-            Delta[self._down_spin_index(i), self._up_spin_index(i_r)] = self.delta
-            Delta[self._up_spin_index(i), self._down_spin_index(i_b)] = self.delta
-            Delta[self._down_spin_index(i), self._up_spin_index(i_b)] = -self.delta
+            if self.snake_mapping:
+                # Even line
+                if (i // self.x_dim) % 2 == 0:
+                    # Exclude the boundary case when x_dimension or y_dimension == 2
+                    if self.x_dim == 2 and self.periodic and i % 2 == 1:
+                        i_r = None
+
+                # Odd line
+                else:
+                    if self.x_dim == 2 and self.periodic and i % 2 == 0:
+                        i_r = None
+
+            else:
+                if self.x_dim == 2 and self.periodic and i % 2 == 1:
+                    i_r = None
+            
+            if self.y_dim == 2 and self.periodic and i // self.x_dim + 1 == self.y_dim:
+                i_b = None
+            
+            if i_r is not None:
+                M[self._up_spin_index(i), self._up_spin_index(i_r)] = -self.tunneling
+                M[self._up_spin_index(i_r), self._up_spin_index(i)] = -self.tunneling
+                M[self._down_spin_index(i), self._down_spin_index(i_r)] = -self.tunneling
+                M[self._down_spin_index(i_r), self._down_spin_index(i)] = -self.tunneling
+
+                Delta[self._up_spin_index(i), self._down_spin_index(i_r)] = -self.delta
+                Delta[self._up_spin_index(i_r), self._down_spin_index(i)] = -self.delta
+                # Delta transpose = -Delta
+                Delta[self._down_spin_index(i_r), self._up_spin_index(i)] = self.delta
+                Delta[self._down_spin_index(i), self._up_spin_index(i_r)] = self.delta
+
+            if i_b is not None:
+                M[self._up_spin_index(i), self._up_spin_index(i_b)] = -self.tunneling
+                M[self._up_spin_index(i_b), self._up_spin_index(i)] = -self.tunneling
+                M[self._down_spin_index(i), self._down_spin_index(i_b)] = -self.tunneling
+                M[self._down_spin_index(i_b), self._down_spin_index(i)] = -self.tunneling
+
+                Delta[self._up_spin_index(i), self._down_spin_index(i_b)] = self.delta
+                Delta[self._up_spin_index(i_b), self._down_spin_index(i)] = self.delta
+                # Delta transpose = -Delta
+                Delta[self._down_spin_index(i_b), self._up_spin_index(i)] = -self.delta
+                Delta[self._down_spin_index(i), self._up_spin_index(i_b)] = -self.delta
 
         return M, Delta
 
