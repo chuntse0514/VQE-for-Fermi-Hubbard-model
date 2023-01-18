@@ -1,1 +1,7 @@
-__pycache__
+/__pycache__
+
+# png output file
+*.png
+
+# test ipynb file
+testfile.ipynb

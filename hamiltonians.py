@@ -383,11 +383,11 @@ class D_wave_mean_field(Lattice_Hamiltonian):
                 M[self._down_spin_index(i), self._down_spin_index(i_r)] = -self.tunneling
                 M[self._down_spin_index(i_r), self._down_spin_index(i)] = -self.tunneling
 
-                Delta[self._up_spin_index(i), self._down_spin_index(i_r)] = -self.delta
-                Delta[self._up_spin_index(i_r), self._down_spin_index(i)] = -self.delta
+                Delta[self._up_spin_index(i), self._down_spin_index(i_r)] = -self.delta/2
+                Delta[self._up_spin_index(i_r), self._down_spin_index(i)] = -self.delta/2
                 # Delta transpose = -Delta
-                Delta[self._down_spin_index(i_r), self._up_spin_index(i)] = self.delta
-                Delta[self._down_spin_index(i), self._up_spin_index(i_r)] = self.delta
+                Delta[self._down_spin_index(i_r), self._up_spin_index(i)] = self.delta/2
+                Delta[self._down_spin_index(i), self._up_spin_index(i_r)] = self.delta/2
 
             if i_b is not None:
                 M[self._up_spin_index(i), self._up_spin_index(i_b)] = -self.tunneling
@@ -395,11 +395,11 @@ class D_wave_mean_field(Lattice_Hamiltonian):
                 M[self._down_spin_index(i), self._down_spin_index(i_b)] = -self.tunneling
                 M[self._down_spin_index(i_b), self._down_spin_index(i)] = -self.tunneling
 
-                Delta[self._up_spin_index(i), self._down_spin_index(i_b)] = self.delta
-                Delta[self._up_spin_index(i_b), self._down_spin_index(i)] = self.delta
+                Delta[self._up_spin_index(i), self._down_spin_index(i_b)] = self.delta/2
+                Delta[self._up_spin_index(i_b), self._down_spin_index(i)] = self.delta/2
                 # Delta transpose = -Delta
-                Delta[self._down_spin_index(i_b), self._up_spin_index(i)] = -self.delta
-                Delta[self._down_spin_index(i), self._up_spin_index(i_b)] = -self.delta
+                Delta[self._down_spin_index(i_b), self._up_spin_index(i)] = -self.delta/2
+                Delta[self._down_spin_index(i), self._up_spin_index(i_b)] = -self.delta/2 
 
         return M, Delta
 

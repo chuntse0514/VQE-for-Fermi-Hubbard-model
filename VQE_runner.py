@@ -27,7 +27,7 @@ def main():
     depth = len(cirq.Circuit(ansatz_circuit.all_operations()))
     print('total circuit depth = {}'.format(depth))
 
-    hamiltonian = ansatz._get_cirq_hamiltonian()
+    hamiltonian = ansatz.get_cirq_hamiltonian()
     state_preparation_circuit = tfq.convert_to_tensor(
         [State_Preparation(mean_field_hamiltonian).circuit()]
         # [cirq.Circuit()]

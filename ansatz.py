@@ -4,29 +4,66 @@ import numpy as np
 import sympy
 from hamiltonians import Hubbard_Model, D_wave_mean_field
 from Gates import *
+import abc
 
 # ToDO: Modify the HVA class such that the snake mapping jw string is compatible with the original HVA ansatz
 # 1. ensure whether the FSWAP gate is in the cirq package
 # 2. figure out how to implement the swap of vertical hopping
 # 3. separate the different circumstance i.e. whether snake mapping or not
 
+class Ansatz_AbstractClass(metaclass=abc.ABCMeta):
+    
+    def __init__(
+        self,
+        hubbard_model: Hubbard_Model,
+        repetition: int
+    ):
+        self.x_dim = hubbard_model.x_dim
+        self.y_dim = hubbard_model.y_dim
+        self.hubbard_model = hubbard_model
+        self.snake_mapping = hubbard_model.snake_mapping
+        self.hamiltonian = hubbard_model.qubit_hamiltonian()
 
-class Hamiltonian_Variational_Ansatz:
+        self.repetition = repetition
+        self.n_site = self.x_dim * self.y_dim
+        self.n_qubit = 2 * self.x_dim * self.y_dim
+        self.qubits = self.get_qubits()
+
+    def get_qubits(self):
+
+        qubits = [0] * self.n_qubit
+        for i in range(self.y_dim):
+            for j in range(self.x_dim):
+                    
+                if i % 2 == 1 and self.snake_mapping:
+                    k = (i+1) * self.x_dim - j - 1
+                else:
+                    k = i * self.x_dim + j
+                
+                qubits[k] = cirq.GridQubit(i, j)
+                qubits[k+self.n_site] = cirq.GridQubit(i, j+self.x_dim)
+
+        return qubits
+
+    def get_cirq_hamiltonian(self):
+        return openfermion.transforms.qubit_operator_to_pauli_sum(self.hamiltonian, self.qubits)
+
+    @abc.abstractmethod
+    def circuit(self):
+        return NotImplemented
+
+
+class Hamiltonian_Variational_Ansatz(Ansatz_AbstractClass):
 
     def __init__(
         self,
         hubbard_model: Hubbard_Model,    # Hubbard_Model object from hamiltonians.py
         repetition: int
     ):  
-        self.x_dim = hubbard_model.x_dim
-        self.y_dim = hubbard_model.y_dim
-        self.n_site = self.x_dim * self.y_dim
-        self.n_qubit = 2 * self.n_site
-        self.hubbard_model = hubbard_model
-        self.repetition = repetition
-        self.snake_mapping = hubbard_model.snake_mapping
-        self.qubits = self.get_qubits()
-        self.hamiltonian = hubbard_model.qubit_hamiltonian()
+        super().__init__(
+            hubbard_model,
+            repetition
+        )
 
     def circuit(self):
 
@@ -49,28 +86,9 @@ class Hamiltonian_Variational_Ansatz:
                 self._on_site_layer(circuit, jw_on_site, params_U[i] / 2)
         return circuit
 
-    def get_qubits(self):
-
-        qubits = [0] * self.n_qubit
-        for i in range(self.y_dim):
-            for j in range(self.x_dim):
-                    
-                if i % 2 == 1 and self.snake_mapping:
-                    k = (i+1) * self.x_dim - j - 1
-                else:
-                    k = i * self.x_dim + j
-                
-                qubits[k] = cirq.GridQubit(i, j)
-                qubits[k+self.n_site] = cirq.GridQubit(i, j+self.x_dim)
-
-        return qubits
-
-    def _get_cirq_hamiltonian(self):
-        return openfermion.transforms.qubit_operator_to_pauli_sum(self.hamiltonian, self.qubits)
-
     def _on_site_layer(self, circuit, jw_on_site, theta):
         for of_operator, coeff in jw_on_site.terms.items():
-            self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
+            circuit.append(Pauli_string_rotation(self.qubits, of_operator, coeff, theta))
                 
     def _vertical_layer(self, circuit, jw_vertical, theta):
         if self.snake_mapping:
@@ -81,7 +99,7 @@ class Hamiltonian_Variational_Ansatz:
                     circuit.append(FSWAP(self.qubits[j], self.qubits[j+1]))
 
                 for of_operator, coeff in jw_vertical_first.terms.items():
-                    self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
+                    circuit.append(Pauli_string_rotation(self.qubits, of_operator, coeff, theta))
                     
             # implementation of the second line
             for i in range(self.x_dim):
@@ -89,58 +107,18 @@ class Hamiltonian_Variational_Ansatz:
                     circuit.append(FSWAP(self.qubits[j], self.qubits[j+1]))
 
                 for of_operator, coeff in jw_vertical_second.terms.items():
-                    self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
+                    circuit.append(Pauli_string_rotation(self.qubits, of_operator, coeff, theta))
                 
         else:
             for of_operator, coeff in jw_vertical.terms.items():
-                self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
+                circuit.append(Pauli_string_rotation(self.qubits, of_operator, coeff, theta))
 
     def _horizontal_layer(self, circuit, jw_horizontal, theta):
         for of_operator, coeff in jw_horizontal.terms.items():
-            self._pauli_string_rotation(circuit, self.qubits, of_operator, coeff, theta)
+            circuit.append(Pauli_string_rotation(self.qubits, of_operator, coeff, theta))
+    
 
-
-    @staticmethod
-    def _pauli_string_rotation(circuit, qubits, of_operator, coefficient, theta):
-        # of_operator is a list like [(1, 'X'), (3, 'Y')]
-        if len(of_operator) != 0:
-            qubit_indices, pauli_ops = zip(*of_operator)
-            
-            for i in range(len(pauli_ops)):
-
-                q = qubits[qubit_indices[i]]
-                op = pauli_ops[i]
-
-                if i < len(pauli_ops) - 1:
-                    if op == 'X':
-                        circuit.append(cirq.ry(-np.pi/4).on(q))
-                    if op == 'Y':
-                        circuit.append(cirq.rx(np.pi/4).on(q))
-
-                    q_next = qubits[qubit_indices[i+1]]
-                    circuit.append(cirq.CNOT(q, q_next))
-                
-                else:
-                    if op == 'X':
-                        circuit.append(cirq.rx(coefficient * theta).on(q))
-                    elif op == 'Y':
-                        circuit.append(cirq.ry(coefficient * theta).on(q))
-                    else:
-                        circuit.append(cirq.rz(coefficient * theta).on(q))
-            
-            for i in reversed(range(len(pauli_ops))):
-                if i > 0:
-                    q = qubits[qubit_indices[i]]
-                    q_prev = qubits[qubit_indices[i-1]]
-                    op = pauli_ops[i-1]
-                    circuit.append(cirq.CNOT(q_prev, q))
-                    if op == 'X':
-                        circuit.append(cirq.ry(np.pi/4).on(q_prev))
-                    if op == 'Y':
-                        circuit.append(cirq.rx(-np.pi/4).on(q_prev))
-
-
-class Symmetry_Breaking_Hamiltonian_Variational_Ansatz(Hamiltonian_Variational_Ansatz):
+class Symmetry_Breaking_Hamiltonian_Variational_Ansatz(Ansatz_AbstractClass):
 
     def __init__(
         self,
@@ -187,7 +165,7 @@ class Symmetry_Breaking_Hamiltonian_Variational_Ansatz(Hamiltonian_Variational_A
             circuit.append(cirq.rx(params_rx[i]).on(self.qubits[i]))
             circuit.append(cirq.ry(params_ry[i]).on(self.qubits[i]))
 
-class Hardware_Efficient_Ansatz(Hamiltonian_Variational_Ansatz):
+class Hardware_Efficient_Ansatz(Ansatz_AbstractClass):
 
     def __init__(
         self,
@@ -218,7 +196,7 @@ class Hardware_Efficient_Ansatz(Hamiltonian_Variational_Ansatz):
 
         return circuit
 
-class Symmetric_Hardware_Efficient_Ansatz(Hamiltonian_Variational_Ansatz):
+class Symmetric_Hardware_Efficient_Ansatz(Ansatz_AbstractClass):
 
     def __init__(
         self,
@@ -256,7 +234,7 @@ class Symmetric_Hardware_Efficient_Ansatz(Hamiltonian_Variational_Ansatz):
         return circuit
 
 
-class Controlled_Layer_Ansatz(Hamiltonian_Variational_Ansatz):
+class Controlled_Layer_Ansatz(Ansatz_AbstractClass):
 
     def __init__(
         self,
@@ -288,7 +266,7 @@ class Controlled_Layer_Ansatz(Hamiltonian_Variational_Ansatz):
 
         return circuit
 
-class Symmetric_Controlled_Layer_Ansatz(Hamiltonian_Variational_Ansatz):
+class Symmetric_Controlled_Layer_Ansatz(Ansatz_AbstractClass):
 
     def __init__(
         self,

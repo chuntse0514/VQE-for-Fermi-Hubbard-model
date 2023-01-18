@@ -9,8 +9,8 @@ from ansatz import *
 def optimize_mean_field_parameter(x_dim, y_dim):
     hubbard_model = Hubbard_Model(4, 2, 1, 4)
     ansatz = Symmetric_Hardware_Efficient_Ansatz(hubbard_model, repetition=2)
-    ansatz_circuit = ansatz.ansatz_circuit()
-    hamiltonian = ansatz._get_cirq_hamiltonian()
+    ansatz_circuit = ansatz.circuit()
+    hamiltonian = ansatz.get_cirq_hamiltonian()
 
     delta_list = tf.linspace(0, 8, 200)
     energy_list = []
@@ -18,7 +18,7 @@ def optimize_mean_field_parameter(x_dim, y_dim):
     for delta in delta_list:
       mean_field_hamiltonian = D_wave_mean_field(x_dim, y_dim, 1, delta)
       state_preparation_circuit = tfq.convert_to_tensor(
-        [State_Preparation(mean_field_hamiltonian).state_preparation_circuit()]
+        [State_Preparation(mean_field_hamiltonian).circuit()]
       )
       VQE_model = tf.keras.Sequential([
       tf.keras.layers.Input(shape=(), dtype=tf.dtypes.string, name='state_prep_input'),
