@@ -2,15 +2,10 @@ import openfermion as of
 from openfermion.transforms import jordan_wigner
 import numpy as np
 from typing import *
-from Fermionic_Gaussian_state import (
-    diagonalize_hopping_matrix,
-    diagnolize_quadratic_hamiltonian,
-    Slater_determinant_decomposition,
-    Fermionic_gaussian_states_decomposition
-)
 
 from openfermion.linalg import get_sparse_operator
 from scipy.linalg import eigh
+import cirq
 
 # Fermionic operator of the hubbard model hamiltonian
 # Notice that the chemical potential and magnetic field terms haven't been implemented.
@@ -35,6 +30,7 @@ class Lattice_Hamiltonian:
         self.y_dim = y_dimension
         self.periodic = periodic
         self.snake_mapping = snake_mapping
+        self.qubits = cirq.LineQubit.range(2 * x_dimension * y_dimension)
 
     def _site_index(self):
         n_site = self.x_dim * self.y_dim
@@ -51,12 +47,18 @@ class Lattice_Hamiltonian:
             for i in range(n_site):
                 yield i
 
-    def _right_index(self, i: int) -> int:
+    def _right(self, i: int) -> int:
         if self.x_dim == 1:
             return None
 
+        if self.x_dim == 2 and self.periodic:
+            if self.snake_mapping and (i % 4 == 1 or i % 4 == 2):
+                return None
+            elif (not self.snake_mapping) and (i % 4 == 1 or i % 4 == 3): 
+                return None
+                
         if self.snake_mapping:
-        # Even line
+            # Even line
             if (i // self.x_dim) % 2 == 0:
                 # Boundary site
                 if (i + 1) % self.x_dim == 0:
@@ -80,7 +82,7 @@ class Lattice_Hamiltonian:
                 else:
                     return i - 1
         
-        else:
+        elif not self.snake_mapping:
             if (i + 1) % self.x_dim == 0:
                 if self.periodic:
                     return i + 1 - self.x_dim
@@ -89,8 +91,11 @@ class Lattice_Hamiltonian:
             else:
                 return i + 1
     
-    def _bottom_index(self, i: int) -> int:
+    def _bottom(self, i: int) -> int:
         if self.y_dim == 1:
+            return None
+
+        if self.y_dim == 2 and self.periodic and i // self.x_dim + 1 == self.y_dim:
             return None
 
         if self.snake_mapping:
@@ -123,7 +128,7 @@ class Lattice_Hamiltonian:
                     r = i % self.x_dim
                     return self.x_dim * (q+2) - r - 1
         
-        else:
+        elif not self.snake_mapping:
             if i // self.x_dim + 1 == self.y_dim:
                 if self.periodic:
                     return i // self.x_dim
@@ -132,10 +137,10 @@ class Lattice_Hamiltonian:
             else:
                 return i + self.x_dim
         
-    def _up_spin_index(self, i):
+    def _up_spin(self, i):
         return i
 
-    def _down_spin_index(self, i):
+    def _down_spin(self, i):
         n_site = self.x_dim * self.y_dim
         return i + n_site
 
@@ -175,36 +180,17 @@ class Hubbard_Model(Lattice_Hamiltonian):
 
         for i in self._site_index():
             # right and bottom index
-            i_r = self._right_index(i)   
-            i_b = self._bottom_index(i)
-            
-            if self.snake_mapping:
-                # Even line
-                if (i // self.x_dim) % 2 == 0:
-                    # Exclude the boundary case when x_dimension or y_dimension == 2
-                    if self.x_dim == 2 and self.periodic and i % 2 == 1:
-                        i_r = None
-
-                # Odd line
-                else:
-                    if self.x_dim == 2 and self.periodic and i % 2 == 0:
-                        i_r = None
-
-            else:
-                if self.x_dim == 2 and self.periodic and i % 2 == 1:
-                    i_r = None
-            
-            if self.y_dim == 2 and self.periodic and i // self.x_dim + 1 == self.y_dim:
-                i_b = None
+            i_r = self._right(i)   
+            i_b = self._bottom(i)
 
             # hopping term
             if i_r is not None:
-                horizontal_tunneling += self._hopping_term(self._up_spin_index(i), self._up_spin_index(i_r))
-                horizontal_tunneling += self._hopping_term(self._down_spin_index(i), self._down_spin_index(i_r))
+                horizontal_tunneling += self._hopping_term(self._up_spin(i), self._up_spin(i_r))
+                horizontal_tunneling += self._hopping_term(self._down_spin(i), self._down_spin(i_r))
             
             if i_b is not None:
-                vertical_tunneling += self._hopping_term(self._up_spin_index(i), self._up_spin_index(i_b))
-                vertical_tunneling += self._hopping_term(self._down_spin_index(i), self._down_spin_index(i_b))
+                vertical_tunneling += self._hopping_term(self._up_spin(i), self._up_spin(i_b))
+                vertical_tunneling += self._hopping_term(self._down_spin(i), self._down_spin(i_b))
 
             # on-site interaction
             on_site_interaction += self._on_site_interaction(i)
@@ -212,12 +198,15 @@ class Hubbard_Model(Lattice_Hamiltonian):
         return horizontal_tunneling, vertical_tunneling, on_site_interaction
 
     # Here we use the jordan wigner transformation 
-    def qubit_hamiltonian(self):
-        hamiltonian = sum(self.fermionic_hamiltonian())
-        return jordan_wigner(hamiltonian)
+    def cirq_hamiltonian(self):
+        fermionic_hamiltonian = sum(self.fermionic_hamiltonian())
+        qubit_hamiltonian = jordan_wigner(fermionic_hamiltonian)
+        return of.qubit_operator_to_pauli_sum(qubit_hamiltonian, self.qubits)
 
     def exact_diagonalization(self):
-        matrix_form = get_sparse_operator(self.qubit_hamiltonian()).todense()
+        fermionic_hamiltonian = sum(self.fermionic_hamiltonian())
+        qubit_hamiltonian = jordan_wigner(fermionic_hamiltonian)
+        matrix_form = get_sparse_operator(qubit_hamiltonian).todense()
         eigenvalues, eigenvectors = eigh(matrix_form)
         return eigenvalues, eigenvectors
 
@@ -229,11 +218,11 @@ class Hubbard_Model(Lattice_Hamiltonian):
         for k in range(self.y_dim-1):
             i = (k+1) * self.x_dim - 1
             if k % 2 == 0:
-                vertical_operator_first += self._hopping_term(self._up_spin_index(i), self._up_spin_index(i+1))
-                vertical_operator_first += self._hopping_term(self._down_spin_index(i), self._down_spin_index(i+1))
+                vertical_operator_first += self._hopping_term(self._up_spin(i), self._up_spin(i+1))
+                vertical_operator_first += self._hopping_term(self._down_spin(i), self._down_spin(i+1))
             else:
-                vertical_operator_second += self._hopping_term(self._up_spin_index(i), self._up_spin_index(i+1))
-                vertical_operator_second += self._hopping_term(self._down_spin_index(i), self._down_spin_index(i+1))
+                vertical_operator_second += self._hopping_term(self._up_spin(i), self._up_spin(i+1))
+                vertical_operator_second += self._hopping_term(self._down_spin(i), self._down_spin(i+1))
 
         return vertical_operator_first, vertical_operator_second
     
@@ -257,8 +246,8 @@ class Hubbard_Model(Lattice_Hamiltonian):
         return hopping_term
 
     def _on_site_interaction(self, i):
-        i = self._up_spin_index(i)
-        j = self._down_spin_index(i)
+        i = self._up_spin(i)
+        j = self._down_spin(i)
         return of.FermionOperator(f'{i}^ {i} {j}^ {j}', self.coulomb)
 
     
@@ -289,150 +278,79 @@ class D_wave_mean_field(Lattice_Hamiltonian):
 
         for i in self._site_index():
             # right and bottom index
-            i_r = self._right_index(i)   
-            i_b = self._bottom_index(i)
-            
-            if self.snake_mapping:
-                # Even line
-                if (i // self.x_dim) % 2 == 0:
-                    # Exclude the boundary case when x_dimension or y_dimension == 2
-                    if self.x_dim == 2 and self.periodic and i % 2 == 1:
-                        i_r = None
-
-                # Odd line
-                else:
-                    if self.x_dim == 2 and self.periodic and i % 2 == 0:
-                        i_r = None
-
-            else:
-                if self.x_dim == 2 and self.periodic and i % 2 == 1:
-                    i_r = None
-            
-            if self.y_dim == 2 and self.periodic and i // self.x_dim + 1 == self.y_dim:
-                i_b = None
+            i_r = self._right(i)   
+            i_b = self._bottom(i)
 
             if i_r is not None:
                 # hopping term
-                hamiltonian += self._hopping_term(self._up_spin_index(i), self._up_spin_index(i_r))
-                hamiltonian += self._hopping_term(self._down_spin_index(i), self._down_spin_index(i_r))
+                hamiltonian += self._hopping_term(self._up_spin(i), self._up_spin(i_r))
+                hamiltonian += self._hopping_term(self._down_spin(i), self._down_spin(i_r))
                 # mean field term
-                hamiltonian += self._mean_field_term(
-                    self._up_spin_index(i),
-                    self._down_spin_index(i_r),
-                    self._down_spin_index(i),
-                    self._up_spin_index(i_r),
-                    horizontal=True
-                )
+                hamiltonian += self._mean_field_term(i, i_r, horizontal=True)
                         
             if i_b is not None:
                 # hopping term
-                hamiltonian += self._hopping_term(self._up_spin_index(i), self._up_spin_index(i_b))
-                hamiltonian += self._hopping_term(self._down_spin_index(i), self._down_spin_index(i_b))
+                hamiltonian += self._hopping_term(self._up_spin(i), self._up_spin(i_b))
+                hamiltonian += self._hopping_term(self._down_spin(i), self._down_spin(i_b))
                 # mean field term
-                hamiltonian += self._mean_field_term(
-                    self._up_spin_index(i),
-                    self._down_spin_index(i_b),
-                    self._down_spin_index(i),
-                    self._up_spin_index(i_b),
-                    horizontal=False
-                )
+                hamiltonian += self._mean_field_term(i, i_b, horizontal=False)
         
         return hamiltonian
-
-    def qubit_hamiltonian(self):
-        hamiltonian = self.fermionic_hamiltonian()
-        return jordan_wigner(hamiltonian)
+    
+    def cirq_hamiltonian(self):
+        fermionic_hamiltonian = self.fermionic_hamiltonian()
+        qubit_hamiltonian = jordan_wigner(fermionic_hamiltonian)
+        return of.qubit_operator_to_pauli_sum(qubit_hamiltonian, self.qubits)
 
     def exact_diagonalization(self):
-        matrix_form = get_sparse_operator(self.qubit_hamiltonian()).todense()
+        fermionic_hamiltonian = self.fermionic_hamiltonian()
+        qubit_hamiltonian = jordan_wigner(fermionic_hamiltonian)
+        matrix_form = get_sparse_operator(qubit_hamiltonian).todense()
         eigenvalues, eigenvectors = eigh(matrix_form)
         return eigenvalues, eigenvectors
 
-    def get_matrix_representation(self):
-        n_site = 2 * self.x_dim * self.y_dim
-        M = np.zeros((n_site, n_site))
-        Delta = np.zeros((n_site, n_site))
-
-        for i in self._site_index():
-            # right and bottom index
-            i_r = self._right_index(i)   
-            i_b = self._bottom_index(i)
-
-            if self.snake_mapping:
-                # Even line
-                if (i // self.x_dim) % 2 == 0:
-                    # Exclude the boundary case when x_dimension or y_dimension == 2
-                    if self.x_dim == 2 and self.periodic and i % 2 == 1:
-                        i_r = None
-
-                # Odd line
-                else:
-                    if self.x_dim == 2 and self.periodic and i % 2 == 0:
-                        i_r = None
-
-            else:
-                if self.x_dim == 2 and self.periodic and i % 2 == 1:
-                    i_r = None
-            
-            if self.y_dim == 2 and self.periodic and i // self.x_dim + 1 == self.y_dim:
-                i_b = None
-            
-            if i_r is not None:
-                M[self._up_spin_index(i), self._up_spin_index(i_r)] = -self.tunneling
-                M[self._up_spin_index(i_r), self._up_spin_index(i)] = -self.tunneling
-                M[self._down_spin_index(i), self._down_spin_index(i_r)] = -self.tunneling
-                M[self._down_spin_index(i_r), self._down_spin_index(i)] = -self.tunneling
-
-                Delta[self._up_spin_index(i), self._down_spin_index(i_r)] = -self.delta/2
-                Delta[self._up_spin_index(i_r), self._down_spin_index(i)] = -self.delta/2
-                # Delta transpose = -Delta
-                Delta[self._down_spin_index(i_r), self._up_spin_index(i)] = self.delta/2
-                Delta[self._down_spin_index(i), self._up_spin_index(i_r)] = self.delta/2
-
-            if i_b is not None:
-                M[self._up_spin_index(i), self._up_spin_index(i_b)] = -self.tunneling
-                M[self._up_spin_index(i_b), self._up_spin_index(i)] = -self.tunneling
-                M[self._down_spin_index(i), self._down_spin_index(i_b)] = -self.tunneling
-                M[self._down_spin_index(i_b), self._down_spin_index(i)] = -self.tunneling
-
-                Delta[self._up_spin_index(i), self._down_spin_index(i_b)] = self.delta/2
-                Delta[self._up_spin_index(i_b), self._down_spin_index(i)] = self.delta/2
-                # Delta transpose = -Delta
-                Delta[self._down_spin_index(i_b), self._up_spin_index(i)] = -self.delta/2
-                Delta[self._down_spin_index(i), self._up_spin_index(i_b)] = -self.delta/2 
-
-        return M, Delta
-
-    def get_diagonalization_ops(self):
-        M, Delta = self.get_matrix_representation()
-        _, W = diagnolize_quadratic_hamiltonian(M, Delta)
-        ops_layers, _ = Fermionic_gaussian_states_decomposition(W)
-        return ops_layers
-
     def _hopping_term(self, i, j):
         hopping_term = of.FermionOperator(f'{i}^ {j}', -self.tunneling)
-        hopping_term += of.FermionOperator(f'{j}^ {i}', -self.tunneling.conjugate())
+        hopping_term += of.utils.hermitian_conjugated(hopping_term)
         return hopping_term
 
-    def _mean_field_term(self, i_up: int, j_down: int, i_down: int, j_up: int, horizontal: bool):
+    def _mean_field_term(self, i: int, j: int, horizontal: bool):
         delta = self.delta/2 if horizontal else -self.delta/2 
-        mean_field_term = of.FermionOperator(f'{i_up}^ {j_down}^', -delta)
-        mean_field_term += of.FermionOperator(f'{i_down}^ {j_up}^', delta)
-        mean_field_term += of.FermionOperator(f'{j_down} {i_up}', -delta)
-        mean_field_term += of.FermionOperator(f'{j_up} {i_down}', delta)
+        i_up = self._up_spin(i)
+        i_down = self._down_spin(i)
+        j_up = self._up_spin(j)
+        j_down = self._down_spin(j)
+
+        mean_field_term = of.FermionOperator()
+
+        mean_field_term += of.FermionOperator(f'{i_up}^ {j_down}^', -delta)
+        mean_field_term += of.FermionOperator(f'{j_up}^ {i_down}^', -delta)
+        mean_field_term += of.utils.hermitian_conjugated(mean_field_term)
+        
         return mean_field_term
 
-def test_eig():
-    hubbard_model = Hubbard_Model(2, 2, 1, 4)
-    eig_vals, eig_vecs = hubbard_model.exact_diagonalization()
-    print('eigenvalues:', eig_vals)
-    print('\n')
-    print('eigenvectors:', eig_vecs)
+def test():
+    model = Hubbard_Model(2, 2, 1, 4, snake_mapping=False)
+    for i in range(6):
+        ir = model._right(i)
+        ib = model._bottom(i)
+        if ir is not None:
+            iru = model._up_spin(ir)
+            ird = model._down_spin(ir)
+        if ib is not None:
+            ibu = model._up_spin(ib)
+            ibd = model._down_spin(ib)
 
+        print(i, ' -> ', f'{ir}({iru}, {ird})', f'{ib}({ibu}, {ibd})')
+
+def test_1():
+    model = D_wave_mean_field(2, 2, 1, 4)
+    print(model.fermionic_hamiltonian())
+    
 
 class Noninteracting(Lattice_Hamiltonian):
     pass
 
 
 if __name__ == '__main__':
-    test_eig()
+    test_1()

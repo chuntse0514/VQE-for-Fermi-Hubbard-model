@@ -1,5 +1,7 @@
 import cirq
 import openfermion
+from openfermion.transforms import get_quadratic_hamiltonian
+from openfermion.circuits import prepare_gaussian_state
 import numpy as np
 import sympy
 from hamiltonians import Hubbard_Model, D_wave_mean_field
@@ -22,31 +24,11 @@ class Ansatz_AbstractClass(metaclass=abc.ABCMeta):
         self.y_dim = hubbard_model.y_dim
         self.hubbard_model = hubbard_model
         self.snake_mapping = hubbard_model.snake_mapping
-        self.hamiltonian = hubbard_model.qubit_hamiltonian()
+        self.qubits = hubbard_model.qubits
 
         self.repetition = repetition
         self.n_site = self.x_dim * self.y_dim
         self.n_qubit = 2 * self.x_dim * self.y_dim
-        self.qubits = self.get_qubits()
-
-    def get_qubits(self):
-
-        qubits = [0] * self.n_qubit
-        for i in range(self.y_dim):
-            for j in range(self.x_dim):
-                    
-                if i % 2 == 1 and self.snake_mapping:
-                    k = (i+1) * self.x_dim - j - 1
-                else:
-                    k = i * self.x_dim + j
-                
-                qubits[k] = cirq.GridQubit(i, j)
-                qubits[k+self.n_site] = cirq.GridQubit(i, j+self.x_dim)
-
-        return qubits
-
-    def get_cirq_hamiltonian(self):
-        return openfermion.transforms.qubit_operator_to_pauli_sum(self.hamiltonian, self.qubits)
 
     @abc.abstractmethod
     def circuit(self):
@@ -266,8 +248,8 @@ class Controlled_Layer_Ansatz(Ansatz_AbstractClass):
 
         return circuit
 
-class Symmetric_Controlled_Layer_Ansatz(Ansatz_AbstractClass):
-
+class Two_Qubit_Interaction_Ansatz(Ansatz_AbstractClass):
+    
     def __init__(
         self,
         hubbard_model: Hubbard_Model,    # Hubbard_Model object from hamiltonians.py
@@ -281,68 +263,78 @@ class Symmetric_Controlled_Layer_Ansatz(Ansatz_AbstractClass):
     def circuit(self):
 
         circuit = cirq.Circuit()
+
+        params_CZ_rot = sympy.symbols('theta_cz:{}'.format(self.repetition*self.n_qubit*2))
+        params_Givens_rot = sympy.symbols('theta_G:{}'.format(self.repetition*self.n_qubit))
+
         params_theta_1 = sympy.symbols('theta1_rx:{}'.format(self.repetition*self.n_qubit))
         params_theta_2 = sympy.symbols('theta2_ry:{}'.format(self.repetition*self.n_qubit))
         params_theta_3 = sympy.symbols('theta3_rx:{}'.format(self.repetition*self.n_qubit))
-        flag = 1
 
         for rep in range(self.repetition):
+            theta_CZ_rot = params_CZ_rot[rep*self.n_qubit*2:(rep+1)*self.n_qubit*2]
+            theta_Givens_rot = params_Givens_rot[rep*self.n_qubit:(rep+1)*self.n_qubit]
             theta_1 = params_theta_1[rep*self.n_qubit:(rep+1)*self.n_qubit]
             theta_2 = params_theta_2[rep*self.n_qubit:(rep+1)*self.n_qubit]
             theta_3 = params_theta_3[rep*self.n_qubit:(rep+1)*self.n_qubit]
-            iterator = range(self.n_qubit) if flag == 1 else reversed(range(self.n_qubit))
-            for i in iterator:
-                circuit.append(cirq.CZ(self.qubits[i], self.qubits[(i+1) % self.n_qubit]))
-            for i in iterator:
+            for i in range(self.n_qubit):
+                circuit.append(self.CZ_rot_layer(i, theta_CZ_rot[i:(i+2)]))
+            for i in range(self.n_site):
+                circuit.append(Givens_rot(self.qubits[i], self.qubits[i+self.n_site], theta_Givens_rot[2*i], theta_Givens_rot[2*i+1]))
+            for i in range(self.n_qubit):
                 circuit.append(cirq.rx(theta_1[i]).on(self.qubits[i]))
                 circuit.append(cirq.ry(theta_2[i]).on(self.qubits[i]))
                 circuit.append(cirq.rx(theta_3[i]).on(self.qubits[i]))
 
         return circuit
+    
+    def CZ_rot_layer(self, i, params):
+        # up spin index
+        if i < self.n_site:
+            i_r = self._right(i)
+            i_b = self._bottom(i)
+        # down spin index
+        else:
+            i_r = self._right(i-self.n_site) 
+            i_b = self._bottom(i-self.n_site)
+            if i_r is not None:
+                i_r = i_r + self.n_site 
+            if i_b is not None:
+                i_b = i_b + self.n_site 
+
+        yield cirq.CZ(self.qubits[i], self.qubits[i_r]) ** params[0] if i_r is not None else cirq.Circuit()
+        yield cirq.CZ(self.qubits[i], self.qubits[i_b]) ** params[1] if i_b is not None else cirq.Circuit()
+
+        
+    def _right(self, i):
+        return self.hubbard_model._right(i)
+
+    def _bottom(self, i):
+        return self.hubbard_model._bottom(i)
+
+    def _up_spin(self, i):
+        return self.hubbard_model._up_spin(i)
+
+    def _down_spin(self, i):
+        return self.hubbard_model._down_spin(i)
 
 class State_Preparation:
     
     def __init__(
         self,
-        mean_field_hamiltonian: D_wave_mean_field
+        mean_field_model: D_wave_mean_field
     ):
-        self.mean_field_hamiltonian = mean_field_hamiltonian
-        self.x_dim = mean_field_hamiltonian.x_dim
-        self.y_dim = mean_field_hamiltonian.y_dim
-        self.snake_mapping = mean_field_hamiltonian.snake_mapping
-        self.n_site = self.x_dim * self.y_dim
-        self.n_qubit = 2 * self.n_site
-        self.qubits = self._get_qubit()
+        self.mean_field_model = mean_field_model
+        self.x_dim = mean_field_model.x_dim
+        self.y_dim = mean_field_model.y_dim
+        self.snake_mapping = mean_field_model.snake_mapping
+        self.qubits = mean_field_model.qubits
         
-
-    def _get_qubit(self):
-        qubits = [0] * self.n_qubit
-        for i in range(self.y_dim):
-            for j in range(self.x_dim):
-                    
-                if i % 2 == 1 and self.snake_mapping:
-                    k = (i+1) * self.x_dim - j - 1
-                else:
-                    k = i * self.x_dim + j
-                
-                qubits[k] = cirq.GridQubit(i, j)
-                qubits[k+self.n_site] = cirq.GridQubit(i, j+self.x_dim)
-
-        return qubits
-
     def circuit(self):
-        ops_layers = self.mean_field_hamiltonian.get_diagonalization_ops()
-        circuit = cirq.Circuit()
-
-        for parallel_layer in ops_layers:
-            for op in parallel_layer:
-
-                if op == 'B':
-                    circuit.append(cirq.X(self.qubits[-1]))
-
-                else:
-                    (i0, i1, theta, phi) = op
-                    q0, q1 = self.qubits[i0], self.qubits[i1]
-                    circuit.append(Givens_rot(q0, q1, theta, phi))
-
+        quadratic_hamiltonian = get_quadratic_hamiltonian(self.mean_field_model.fermionic_hamiltonian())
+        circuit_tree = prepare_gaussian_state(self.qubits, quadratic_hamiltonian)
+        circuit = cirq.Circuit(circuit_tree)
         return circuit
+
+if __name__ == '__main__':
+    pass

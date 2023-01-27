@@ -15,8 +15,11 @@ from matplotlib.pyplot import figure
 NUM_EPOCHS = 150
 
 def main():
+
     hubbard_model = Hubbard_Model(4, 2, 1, 4)
-    mean_field_hamiltonian = D_wave_mean_field(4, 2, 1, 4.180904522613066)
+    mean_field_model = D_wave_mean_field(4, 2, 1, 4.180904522613066)
+
+    hamiltonian = hubbard_model.cirq_hamiltonian()
 
     # ansatz = Hamiltonian_Variational_Ansatz(hubbard_model, repetition=120)
     # ansatz = Symmetry_Breaking_Hamiltonian_Variational_Ansatz(hubbard_model, repetition=30)
@@ -27,9 +30,8 @@ def main():
     depth = len(cirq.Circuit(ansatz_circuit.all_operations()))
     print('total circuit depth = {}'.format(depth))
 
-    hamiltonian = ansatz.get_cirq_hamiltonian()
     state_preparation_circuit = tfq.convert_to_tensor(
-        [State_Preparation(mean_field_hamiltonian).circuit()]
+        [State_Preparation(mean_field_model).circuit()]
         # [cirq.Circuit()]
     )
 
@@ -68,28 +70,6 @@ def main():
     plt.xlabel('epoch')
     plt.ylabel('energy')
     plt.savefig('plot.png')
-    
-
-
-def test():
-    q = cirq.GridQubit(0, 0)
-    (a, b, c) = sympy.symbols("a b c")
-    circuit = cirq.Circuit(
-        cirq.rz(a)(q),
-        cirq.rx(b)(q),
-        cirq.rz(c)(q),
-        cirq.rx(-b)(q),
-        cirq.rz(-a)(q)
-    )
-
-    outputs = tfq.layers.PQC(circuit, cirq.Z(q))
-    quantum_data = tfq.convert_to_tensor([
-        cirq.Circuit(),
-        cirq.Circuit(cirq.X(q))
-    ])
-    res = outputs(quantum_data)
-    print(circuit)
-
 
 if __name__ == '__main__':
     main()

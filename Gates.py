@@ -2,21 +2,9 @@ import cirq
 import numpy as np
 
 def Givens_rot(q0, q1, theta, phi):
-    circuit = cirq.Circuit(
-        cirq.CX(q1, q0),
-        cirq.X(q1),
-        cirq.CZ(q0, q1) ** (phi/np.pi),
-        cirq.X(q1),
-        cirq.rz(-np.pi/2).on(q1),
-        cirq.CZ(q0, q1) ** (theta/(np.pi*2)),
-        cirq.X(q1),
-        cirq.CZ(q0, q1) ** (theta/(np.pi*2)),
-        cirq.X(q1),
-        cirq.CX(q0, q1) ** (-theta/np.pi),
-        cirq.rz(np.pi/2).on(q1),
-        cirq.CX(q1, q0)
-    )
-    return circuit
+
+    yield cirq.PhasedISwapPowGate(phase_exponent=0.25, exponent=theta*2/np.pi).on(q0, q1)
+    yield cirq.rz(phi).on(q1)
 
 def FSWAP(q0, q1):
     circuit = cirq.Circuit(
